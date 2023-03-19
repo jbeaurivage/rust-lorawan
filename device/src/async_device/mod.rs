@@ -221,19 +221,19 @@ where
             .region
             .create_tx_config(&mut self.rng, self.datarate, &Frame::Data);
 
-        // Unless the same frame is to be retransmitted (see NbTrans parameter of LinkADRReq command, LoRaWAN spec
-        // 1.0.2 section 5.2 for retransmissions), FCnt must be incremented on each transmission.
-        self.session
-            .as_mut()
-            .ok_or(Error::NetworkNotJoined)?
-            .fcnt_up_increment();
-
         // Transmit our data packet
         let ms = self
             .radio
             .tx(tx_config, self.radio_buffer.as_ref())
             .await
             .map_err(Error::Radio)?;
+
+        // Unless the same frame is to be retransmitted (see NbTrans parameter of LinkADRReq command, LoRaWAN spec
+        // 1.0.2 section 5.2 for retransmissions), FCnt must be incremented on each transmission.
+        self.session
+            .as_mut()
+            .ok_or(Error::NetworkNotJoined)?
+            .fcnt_up_increment();
 
         // Wait for received data within window
         self.timer.reset();
@@ -246,16 +246,16 @@ where
                 Ok(PhyPayload::Data(DataPayload::Encrypted(encrypted_data))) => {
                     if session_data.devaddr() == &encrypted_data.fhdr().dev_addr() {
                         let fcnt = encrypted_data.fhdr().fcnt() as u32;
+
+                        // Whether or not we asked for the frame to be confirmed
+                        let confirmed_request = confirmed;
+                        // Whether or not the frame has actually been confirmed
                         let confirmed = encrypted_data.is_confirmed();
+
                         if encrypted_data.validate_mic(session_data.newskey(), fcnt)
                             && (fcnt > session_data.fcnt_down || fcnt == 0)
                         {
                             session_data.fcnt_down = fcnt;
-                            // increment the FcntUp since we have received
-                            // downlink - only reason to not increment
-                            // is if confirmed frame is sent and no
-                            // confirmation (ie: downlink) occurs
-                            session_data.fcnt_up_increment();
 
                             // * the decrypt will always work when we have verified MIC previously
                             let decrypted = encrypted_data
@@ -514,5 +514,10 @@ impl SessionData {
 
     pub fn fcnt_up_increment(&mut self) {
         self.fcnt_up += 1;
+    }
+
+    /// Decrement the `FCntUp` counter -- This should only ever be used on the very specific occasion where we want to retry a *confirmed* uplink before the RX2 window expires.
+    pub fn fcnt_up_decrement(&mut self) {
+        self.fcnt_up -= 1;
     }
 }
