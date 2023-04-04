@@ -106,7 +106,10 @@ impl<const D: usize, F: FixedChannelRegion<D>> RegionHandler for FixedChannelPla
             Frame::Join => {
                 // Right now, we only select one of the random 64 channels that are 125 kHz
                 // TODO: randomly select from all 72 channels including the 500 kHz channels
-                let channel = (rng.next_u32() & 0b111111) as u8;
+
+                // TODO HACK: only selecting channels 8-15 for debugging
+                let channel = (rng.next_u32() % 8) as u8 + 8;
+
                 self.last_tx_channel = channel;
                 // For the join frame, the randomly selected channel dictates the datarate
                 // When TODO above is implemented, this does not require changes

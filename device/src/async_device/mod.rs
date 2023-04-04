@@ -15,7 +15,7 @@ use lorawan::{
     self,
     creator::DataPayloadCreator,
     keys::{CryptoFactory, AES128},
-    maccommands::SerializableMacCommand,
+    maccommands::{ChannelMask, SerializableMacCommand},
     parser::DevAddr,
     parser::{parse_with_factory as lorawan_parse, *},
 };
@@ -539,6 +539,30 @@ where
     }
 }
 
+#[allow(dead_code)]
+impl<R, C, T, G, const N: usize> Device<R, C, T, G, N>
+where
+    R: radio::PhyRxTx + Timings,
+    C: CryptoFactory + Default,
+    T: radio::Timer,
+    G: OptionalRng,
+    Phy<R, G>: GetRng,
+{
+    // TODO only for testing! does not actually set subbands!
+    pub async fn join_biased(
+        &mut self,
+        join_mode: &JoinMode,
+        _subband: u8,
+    ) -> Result<(), Error<R::PhyError>> {
+        // Turn off all channels
+        self.region
+            .set_channel_mask(7, ChannelMask::new(&[0x00; 2]).unwrap());
+        // Only turn on channels 7-15
+        self.region
+            .set_channel_mask(0, ChannelMask::new(&[0x00, 0xFF]).unwrap());
+        self.join(join_mode).await
+    }
+}
 /// Contains data for the current session
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
