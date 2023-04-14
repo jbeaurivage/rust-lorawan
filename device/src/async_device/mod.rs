@@ -559,7 +559,7 @@ where
             .set_channel_mask(7, ChannelMask::new(&[0x00; 2]).unwrap());
         // Only turn on channels 7-15
         self.region
-            .set_channel_mask(0, ChannelMask::new(&[0x00, 0xFF]).unwrap());
+            .set_channel_mask(0, ChannelMask::new(&[0xFF, 0x00]).unwrap());
         self.join(join_mode).await
     }
 }
