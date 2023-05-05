@@ -206,7 +206,17 @@ impl Configuration {
         datarate: DR,
         frame: &Frame,
     ) -> TxConfig {
-        let (dr, frequency) = self.get_tx_dr_and_frequency(rng, datarate, frame);
+        self.create_tx_config_biased(rng, datarate, frame, None)
+    }
+
+    pub(crate) fn create_tx_config_biased<RNG: RngCore>(
+        &mut self,
+        rng: &mut RNG,
+        datarate: DR,
+        frame: &Frame,
+        channel_bias: Option<&[u8]>,
+    ) -> TxConfig {
+        let (dr, frequency) = self.get_tx_dr_and_frequency(rng, datarate, frame, channel_bias);
         TxConfig {
             pw: self.get_dbm(),
             rf: RfConfig {
@@ -223,8 +233,16 @@ impl Configuration {
         rng: &mut RNG,
         datarate: DR,
         frame: &Frame,
+        channel_bias: Option<&[u8]>,
     ) -> (Datarate, u32) {
-        mut_region_dispatch!(self, get_tx_dr_and_frequency, rng, datarate, frame)
+        mut_region_dispatch!(
+            self,
+            get_tx_dr_and_frequency,
+            rng,
+            datarate,
+            frame,
+            channel_bias
+        )
     }
 
     pub(crate) fn get_rx_config(
@@ -335,6 +353,7 @@ pub(crate) trait RegionHandler {
         rng: &mut RNG,
         datarate: DR,
         frame: &Frame,
+        channel_bias: Option<&[u8]>,
     ) -> (Datarate, u32);
 
     fn get_rx_frequency(&self, frame: &Frame, window: &Window) -> u32;

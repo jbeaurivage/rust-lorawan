@@ -156,6 +156,7 @@ impl<
         rng: &mut RNG,
         datarate: DR,
         frame: &Frame,
+        _channel_bias: Option<&[u8]>, // ignored for dynamic channel plans
     ) -> (Datarate, u32) {
         match frame {
             Frame::Join => {

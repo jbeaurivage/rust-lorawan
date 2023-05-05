@@ -34,8 +34,9 @@ use core::cmp::min;
 /// Type-level version of the [`None`] variant
 pub struct NoneT;
 
-/// Type-level Option representing a type that can either implement [`RngCore`] or be [`NoneT`].
-/// This trait is an implementation detail and should not be implemented outside this crate.
+/// Type-level Option representing a type that can either implement [`RngCore`]
+/// or be [`NoneT`]. This trait is an implementation detail and should not be
+/// implemented outside this crate.
 #[doc(hidden)]
 pub trait OptionalRng: Sealed {}
 
@@ -45,12 +46,14 @@ impl OptionalRng for NoneT {}
 impl<T: RngCore> Sealed for T {}
 impl<T: RngCore> OptionalRng for T {}
 
-/// Representation of the physical radio + RNG. Two variants may be constructed through [`Device`]. Either:
+/// Representation of the physical radio + RNG. Two variants may be constructed
+/// through [`Device`]. Either:
 /// * `R` implements [`RngCore`], or
 /// * `G` implements [`RngCore`].
 ///
-/// This allows for seamless functionality with either RNG variant and is an implementation detail. Users are not
-/// expected to construct [`Phy`] directly. Use the constructors for [`Device`] instead.
+/// This allows for seamless functionality with either RNG variant and is an
+/// implementation detail. Users are not expected to construct [`Phy`] directly.
+/// Use the constructors for [`Device`] instead.
 pub struct Phy<R, G: OptionalRng> {
     radio: R,
     rng: G,
@@ -76,11 +79,13 @@ where
     }
 }
 
-/// Type representing a LoRaWAN cabable device. A device is bound to the following types:
+/// Type representing a LoRaWAN cabable device. A device is bound to the
+/// following types:
 /// - R: An asynchronous radio implementation
 /// - T: An asynchronous timer implementation
 /// - C: A CryptoFactory implementation
-/// - RNG: A random number generator implementation. This is optional depending on whether you construct [`Device`]
+/// - RNG: A random number generator implementation. This is optional depending
+///   on whether you construct [`Device`]
 /// with the `new` or `new_with_builtin_rng` methods.
 pub struct Device<R, C, T, G, const N: usize = 256>
 where
@@ -106,6 +111,7 @@ pub enum Error<R> {
     NetworkNotJoined,
     UnableToPreparePayload(&'static str),
     InvalidDevAddr,
+    InvalidChannels,
     RxTimeout,
     SessionExpired,
     InvalidMic,
@@ -136,8 +142,8 @@ where
     T: radio::Timer,
     G: RngCore,
 {
-    /// Create a new instance of [`Device`] with a RNG external to the LoRa chip.
-    /// See also [`new_with_builtin_rng`](Self::new_with_builtin_rng)
+    /// Create a new instance of [`Device`] with a RNG external to the LoRa
+    /// chip. See also [`new_with_builtin_rng`](Self::new_with_builtin_rng)
     pub fn new(region: region::Configuration, radio: R, timer: T, rng: G) -> Device<R, C, T, G, N> {
         Device::new_with_session(region, radio, timer, rng, None)
     }
@@ -184,76 +190,61 @@ where
         self.datarate
     }
 
-    /// Set the data rate being used by this device. This overrides the region default.
+    /// Set the data rate being used by this device. This overrides the region
+    /// default.
     pub fn set_datarate(&mut self, datarate: region::DR) {
         self.datarate = datarate;
     }
 
-    /// Join the LoRaWAN network asynchronusly. The returned future completes when
-    /// the LoRaWAN network has been joined successfully, or an error has occured.
+    /// Join the LoRaWAN network asynchronusly. The returned future completes
+    /// when the LoRaWAN network has been joined successfully, or an error
+    /// has occured.
     ///
-    /// Repeatedly calling join using OTAA will result in a new LoRaWAN session to be created.
+    /// Repeatedly calling join using OTAA will result in a new LoRaWAN session
+    /// to be created.
     pub async fn join(&mut self, join_mode: &JoinMode) -> Result<(), Error<R::PhyError>> {
-        match join_mode {
-            JoinMode::OTAA {
-                deveui,
-                appeui,
-                appkey,
-            } => {
-                let credentials = Credentials::new(*appeui, *deveui, *appkey);
-
-                // Prepare the buffer with the join payload
-                let (devnonce, tx_config) = credentials
-                    .create_join_request::<C, <Phy<R, G> as GetRng>::RNG, N>(
-                        &mut self.region,
-                        self.phy.get_rng(),
-                        self.datarate,
-                        &mut self.radio_buffer,
-                    );
-
-                // Transmit the join payload
-                let ms = self
-                    .phy
-                    .radio
-                    .tx(tx_config, self.radio_buffer.as_ref())
-                    .await
-                    .map_err(Error::Radio)?;
-
-                // Receive join response within RX window
-                self.timer.reset();
-                self.rx_with_timeout(&Frame::Join, ms).await?;
-
-                // Parse join response
-                match lorawan_parse(self.radio_buffer.as_mut(), C::default()) {
-                    Ok(PhyPayload::JoinAccept(JoinAcceptPayload::Encrypted(encrypted))) => {
-                        let decrypt = encrypted.decrypt(credentials.appkey());
-                        self.region.process_join_accept(&decrypt);
-                        if decrypt.validate_mic(credentials.appkey()) {
-                            let data = SessionData::derive_new(&decrypt, devnonce, &credentials);
-                            self.session.replace(data);
-                            Ok(())
-                        } else {
-                            Err(Error::InvalidMic)
-                        }
-                    }
-                    Err(err) => Err(Error::UnableToDecodePayload(err)),
-                    _ => Err(Error::UnableToDecodePayload("")),
-                }
-            }
-            JoinMode::ABP {
-                newskey,
-                appskey,
-                devaddr,
-            } => {
-                self.session
-                    .replace(SessionData::new(*newskey, *appskey, *devaddr));
-                Ok(())
-            }
-        }
+        self.join_internal(join_mode, None).await
     }
 
-    /// Send data on a given port with the expected confirmation. The returned future completes
-    /// when the data have been sent successfully, or an error has occured.
+    /// Try to join the network by biasing the available channels. Using this
+    /// method, the network will be attempted to be joined only on the provided
+    /// channel subset.
+    ///
+    /// This method only makes sense for fixed channel plans (AU915, US915). In
+    /// other regions, the behaviour will be exactly the same as [`join`](Self::join).
+    ///
+    /// # About supported channels
+    ///
+    /// Supported channels:
+    ///
+    /// * 64 125 kHz channels (0-63)
+    /// * 8 500 kHz channels (64-71)
+    ///
+    /// If a channel out of this range is specified, it will be silently ignored.
+    ///
+    ///
+    /// # Note
+    ///
+    /// It is recommended to try to join the network with a channel bias only a few
+    /// times, and switch to [`join`](Self::join) if unsuccessful. The reason for this
+    /// is if you *only* use [`join_biased`](Self::join_biased), and the network is
+    /// configured to use a different set of channels than the ones you provide,
+    /// the network can NEVER be joined.
+    ///
+    /// # Panics
+    ///
+    /// The length of `channel_list` must be <= 72, otherwise a panic will occur.
+    pub async fn join_biased(
+        &mut self,
+        join_mode: &JoinMode,
+        channel_list: &[u8],
+    ) -> Result<(), Error<R::PhyError>> {
+        self.join_internal(join_mode, Some(channel_list)).await
+    }
+
+    /// Send data on a given port with the expected confirmation. The returned
+    /// future completes when the data have been sent successfully, or an
+    /// error has occured.
     pub async fn send(
         &mut self,
         data: &[u8],
@@ -265,11 +256,12 @@ where
         Ok(())
     }
 
-    /// Send data on a given port with the expected confirmation. If downlink data is provided, the data is
-    /// copied into the provided byte slice.
+    /// Send data on a given port with the expected confirmation. If downlink
+    /// data is provided, the data is copied into the provided byte slice.
     ///
-    /// The returned future completes when the data have been sent successfully and downlink data have been
-    /// copied into the provided buffer, or an error has occured.
+    /// The returned future completes when the data have been sent successfully
+    /// and downlink data have been copied into the provided buffer, or an
+    /// error has occured.
     pub async fn send_recv(
         &mut self,
         data: &[u8],
@@ -301,8 +293,9 @@ where
             self.region
                 .create_tx_config(self.phy.get_rng(), self.datarate, &Frame::Data);
 
-        // Unless the same frame is to be retransmitted (see NbTrans parameter of LinkADRReq command, LoRaWAN spec
-        // 1.0.2 section 5.2 for retransmissions), FCnt must be incremented on each transmission.
+        // Unless the same frame is to be retransmitted (see NbTrans parameter of
+        // LinkADRReq command, LoRaWAN spec 1.0.2 section 5.2 for
+        // retransmissions), FCnt must be incremented on each transmission.
         self.session
             .as_mut()
             .ok_or(Error::NetworkNotJoined)?
@@ -391,6 +384,70 @@ where
         }
     }
 
+    async fn join_internal(
+        &mut self,
+        join_mode: &JoinMode,
+        channel_bias: Option<&[u8]>,
+    ) -> Result<(), Error<R::PhyError>> {
+        match join_mode {
+            JoinMode::OTAA {
+                deveui,
+                appeui,
+                appkey,
+            } => {
+                let credentials = Credentials::new(*appeui, *deveui, *appkey);
+
+                // Prepare the buffer with the join payload
+                let (devnonce, tx_config) = credentials
+                    .create_join_request_biased::<C, <Phy<R, G> as GetRng>::RNG, N>(
+                        &mut self.region,
+                        self.phy.get_rng(),
+                        self.datarate,
+                        &mut self.radio_buffer,
+                        channel_bias,
+                    );
+
+                // Transmit the join payload
+                let ms = self
+                    .phy
+                    .radio
+                    .tx(tx_config, self.radio_buffer.as_ref())
+                    .await
+                    .map_err(Error::Radio)?;
+
+                // Receive join response within RX window
+                self.timer.reset();
+                self.rx_with_timeout(&Frame::Join, ms).await?;
+
+                // Parse join response
+                match lorawan_parse(self.radio_buffer.as_mut(), C::default()) {
+                    Ok(PhyPayload::JoinAccept(JoinAcceptPayload::Encrypted(encrypted))) => {
+                        let decrypt = encrypted.decrypt(credentials.appkey());
+                        self.region.process_join_accept(&decrypt);
+                        if decrypt.validate_mic(credentials.appkey()) {
+                            let data = SessionData::derive_new(&decrypt, devnonce, &credentials);
+                            self.session.replace(data);
+                            Ok(())
+                        } else {
+                            Err(Error::InvalidMic)
+                        }
+                    }
+                    Err(err) => Err(Error::UnableToDecodePayload(err)),
+                    _ => Err(Error::UnableToDecodePayload("")),
+                }
+            }
+            JoinMode::ABP {
+                newskey,
+                appskey,
+                devaddr,
+            } => {
+                self.session
+                    .replace(SessionData::new(*newskey, *appskey, *devaddr));
+                Ok(())
+            }
+        }
+    }
+
     // Prepare radio buffer with data using session state
     fn prepare_buffer(
         &mut self,
@@ -450,9 +507,9 @@ where
         }
     }
 
-    /// Attempt to receive data within RX1 and RX2 windows. This function will populate the
-    /// provided buffer with data if received. Will return a RxTimeout error if no RX within
-    /// the windows.
+    /// Attempt to receive data within RX1 and RX2 windows. This function will
+    /// populate the provided buffer with data if received. Will return a
+    /// RxTimeout error if no RX within the windows.
     async fn rx_with_timeout(
         &mut self,
         frame: &Frame,
@@ -468,7 +525,8 @@ where
         frame: &Frame,
         window_delay: u32,
     ) -> Result<usize, Error<R::PhyError>> {
-        // The initial window configuration uses window 1 adjusted by window_delay and radio offset
+        // The initial window configuration uses window 1 adjusted by window_delay and
+        // radio offset
         let rx1_start_delay = (self.region.get_rx_delay(frame, &Window::_1) as i32
             + window_delay as i32
             + self.phy.radio.get_rx_window_offset_ms()) as u32;

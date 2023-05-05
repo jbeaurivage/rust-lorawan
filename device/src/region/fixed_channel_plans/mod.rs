@@ -101,16 +101,33 @@ impl<const D: usize, F: FixedChannelRegion<D>> RegionHandler for FixedChannelPla
         rng: &mut RNG,
         datarate: DR,
         frame: &Frame,
+        channel_bias: Option<&[u8]>,
     ) -> (Datarate, u32) {
         match frame {
             Frame::Join => {
-                // Right now, we only select one of the random 64 channels that are 125 kHz
-                // TODO: randomly select from all 72 channels including the 500 kHz channels
-                let channel = (rng.next_u32() & 0b111111) as u8;
+                let random_number = rng.next_u32();
+                let channel = match channel_bias {
+                    None => {
+                        // Right now, we only select one of the random 64 channels that are 125 kHz
+                        // TODO: randomly select from all 72 channels including the 500 kHz channels
+                        (random_number % 64) as u8
+                    }
+                    Some(cl) => {
+                        let mut channel_list = heapless::Vec::<u8, 72>::new();
+                        for channel in cl {
+                            // Check that the specified channel is supported
+                            if *channel < 72 {
+                                channel_list.push(*channel).unwrap();
+                            }
+                        }
+                        // Pick one at random between all the supported channels.
+                        channel_list[random_number as usize % cl.len()]
+                    }
+                };
                 self.last_tx_channel = channel;
                 // For the join frame, the randomly selected channel dictates the datarate
                 // When TODO above is implemented, this does not require changes
-                let datarate = if channel > 64 { DR::_4 } else { DR::_0 };
+                let datarate = if channel > 63 { DR::_4 } else { DR::_0 };
                 (
                     F::datarates()[datarate as usize].clone().unwrap(),
                     F::uplink_channels()[channel as usize],

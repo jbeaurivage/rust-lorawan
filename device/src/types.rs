@@ -47,6 +47,23 @@ impl Credentials {
         datarate: DR,
         buf: &mut RadioBuffer<N>,
     ) -> (DevNonce, TxConfig) {
+        self.create_join_request_biased::<C, _, N>(region, rng, datarate, buf, None)
+    }
+
+    /// Prepare a join request. Same as [`create_join_request`](Self::create_join_request) but with
+    /// the option of specifiying which channels we want to use.
+    pub(crate) fn create_join_request_biased<
+        C: CryptoFactory + Default,
+        RNG: RngCore,
+        const N: usize,
+    >(
+        &self,
+        region: &mut Configuration,
+        rng: &mut RNG,
+        datarate: DR,
+        buf: &mut RadioBuffer<N>,
+        channels: Option<&[u8]>,
+    ) -> (DevNonce, TxConfig) {
         // use lowest 16 bits for devnonce
         let devnonce_bytes = rng.next_u32() as u16;
 
@@ -66,7 +83,7 @@ impl Credentials {
         buf.extend_from_slice(vec).unwrap();
         (
             devnonce_copy,
-            region.create_tx_config(rng, datarate, &Frame::Join),
+            region.create_tx_config_biased(rng, datarate, &Frame::Join, channels),
         )
     }
 }
