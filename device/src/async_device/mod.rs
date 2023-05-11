@@ -19,11 +19,10 @@ use lorawan::{
     parser::DevAddr,
     parser::{parse_with_factory as lorawan_parse, *},
 };
-use rand_core::RngCore;
 
 type DevNonce = lorawan::parser::DevNonce<[u8; 2]>;
 pub use crate::region::DR;
-use crate::{private::Sealed, radio::types::RadioBuffer, GetRng};
+use crate::{private::Sealed, radio::types::RadioBuffer, GetRandom, GetRng};
 #[cfg(feature = "external-lora-phy")]
 /// provide the radio through the external lora-phy crate
 pub mod lora_radio;
@@ -42,8 +41,7 @@ pub trait OptionalRng: Sealed {}
 impl Sealed for NoneT {}
 impl OptionalRng for NoneT {}
 
-impl<T: RngCore> Sealed for T {}
-impl<T: RngCore> OptionalRng for T {}
+impl<T: GetRandom> OptionalRng for T {}
 
 /// Representation of the physical radio + RNG. Two variants may be constructed through [`Device`]. Either:
 /// * `R` implements [`RngCore`], or
@@ -56,19 +54,19 @@ pub struct Phy<R, G: OptionalRng> {
     rng: G,
 }
 
-impl<R: RngCore> Sealed for Phy<R, NoneT> {}
-impl<R: RngCore> GetRng for Phy<R, NoneT> {
+impl<R: GetRandom> Sealed for Phy<R, NoneT> {}
+impl<R: GetRandom> GetRng for Phy<R, NoneT> {
     type RNG = R;
     fn get_rng(&mut self) -> &mut Self::RNG {
         &mut self.radio
     }
 }
 
-impl<R, G: RngCore> Sealed for Phy<R, G> {}
+impl<R, G: GetRandom> Sealed for Phy<R, G> {}
 impl<R, G> GetRng for Phy<R, G>
 where
     R: radio::PhyRxTx + Timings,
-    G: RngCore,
+    G: GetRandom,
 {
     type RNG = G;
     fn get_rng(&mut self) -> &mut Self::RNG {
@@ -114,7 +112,7 @@ pub enum Error<R> {
 
 impl<R, C, T, const N: usize> Device<R, C, T, NoneT, N>
 where
-    R: radio::PhyRxTx + Timings + RngCore,
+    R: radio::PhyRxTx + Timings + GetRandom,
     C: CryptoFactory + Default,
     T: radio::Timer,
 {
@@ -134,7 +132,7 @@ where
     R: radio::PhyRxTx + Timings,
     C: CryptoFactory + Default,
     T: radio::Timer,
-    G: RngCore,
+    G: GetRandom,
 {
     /// Create a new instance of [`Device`] with a RNG external to the LoRa chip.
     /// See also [`new_with_builtin_rng`](Self::new_with_builtin_rng)
@@ -221,6 +219,14 @@ where
                 appkey,
             } => {
                 let credentials = Credentials::new(*appeui, *deveui, *appkey);
+
+                // TODO figure out what is a sensible number here
+                let fix_unwrap_on_next_lines = ();
+                #[cfg(feature = "async-rng")]
+                self.phy.get_rng().fill_up_to(100).await.unwrap();
+
+                #[cfg(not(feature = "async-rng"))]
+                self.phy.get_rng().fill_up_to(100).unwrap();
 
                 // Prepare the buffer with the join payload
                 let (devnonce, tx_config) = credentials
@@ -316,10 +322,20 @@ where
         // Prepare transmission buffer
         let _ = self.prepare_buffer(data, fport, confirmed)?;
 
+        // TODO figure out how many random numbers we actually need
+        let fix_unwrap_on_next_lines = ();
+
+        #[cfg(feature = "async-rng")]
+        self.phy.get_rng().fill_up_to(100).await.unwrap();
+
+        #[cfg(not(feature = "async-rng"))]
+        self.phy.get_rng().fill_up_to(100).unwrap();
+
         // Send data
-        let tx_config =
-            self.region
-                .create_tx_config(self.phy.get_rng(), self.datarate, &Frame::Data);
+        let tx_config = self
+            .region
+            .create_tx_config(self.phy.get_rng(), self.datarate, &Frame::Data)
+            .unwrap();
 
         // Unless the same frame is to be retransmitted (see NbTrans parameter of LinkADRReq command, LoRaWAN spec
         // 1.0.2 section 5.2 for retransmissions), FCnt must be incremented on each transmission.

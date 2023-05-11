@@ -1,3 +1,5 @@
+use crate::{GetRandom, GetRandomError};
+
 use super::radio::{
     Bandwidth, CodingRate, PhyRxTx, RfConfig, RxQuality, SpreadingFactor, TxConfig,
 };
@@ -5,7 +7,7 @@ use super::region::constants::DEFAULT_DBM;
 use super::Timings;
 
 use lora_phy::mod_params::{BoardType, ChipType, RadioError};
-use lora_phy::mod_traits::RadioKind;
+use lora_phy::mod_traits::{AsyncRng, RadioKind};
 use lora_phy::LoRa;
 
 /// Convert the spreading factor for use in the external lora-phy crate
@@ -48,6 +50,8 @@ impl From<CodingRate> for lora_phy::mod_params::CodingRate {
 /// LoRa radio using the physical layer API in the external lora-phy crate
 pub struct LoRaRadio<RK> {
     pub(crate) lora: LoRa<RK>,
+    #[cfg(feature = "async-rng")]
+    pub(crate) random_buffer: heapless::Vec<u32, 128>,
 }
 
 impl<RK> LoRaRadio<RK>
@@ -55,7 +59,17 @@ where
     RK: RadioKind + 'static,
 {
     pub fn new(lora: LoRa<RK>) -> Self {
-        Self { lora }
+        #[cfg(not(feature = "async-rng"))]
+        return Self { lora };
+
+        #[cfg(feature = "async-rng")]
+        {
+            let random_buffer = heapless::Vec::new();
+            return Self {
+                lora,
+                random_buffer,
+            };
+        }
     }
 }
 
@@ -69,6 +83,7 @@ where
             BoardType::Rak4631Sx1262 => -15,
             BoardType::Stm32l0Sx1276 => -15,
             BoardType::Stm32wlSx1262 => -50,
+            BoardType::WearableAvionicsNimbus => -100,
             _ => -50,
         }
     }
@@ -77,6 +92,7 @@ where
             BoardType::Rak4631Sx1262 => 1050,
             BoardType::Stm32l0Sx1276 => 1003,
             BoardType::Stm32wlSx1262 => 1050,
+            BoardType::WearableAvionicsNimbus => 3000,
             _ => 1050,
         }
     }
@@ -157,5 +173,34 @@ where
             }
             Err(err) => Err(err),
         }
+    }
+}
+
+impl<RK> crate::private::Sealed for LoRaRadio<RK> where LoRa<RK>: lora_phy::mod_traits::AsyncRng {}
+
+#[cfg(feature = "async-rng")]
+impl<RK> GetRandom for LoRaRadio<RK>
+where
+    LoRa<RK>: lora_phy::mod_traits::AsyncRng,
+{
+    fn get_random(&mut self) -> Result<u32, crate::GetRandomError> {
+        self.random_buffer.pop().ok_or(GetRandomError::BufferEmpty)
+    }
+
+    async fn fill_up_to(&mut self, num_random_numbers: usize) -> Result<(), GetRandomError> {
+        let current_len = self.random_buffer.len();
+        let to_add = num_random_numbers.saturating_sub(current_len);
+        for _ in 0..to_add {
+            let rand = self
+                .lora
+                .get_random_number()
+                .await
+                .map_err(|_| GetRandomError::RngError)?;
+            self.random_buffer
+                .push(rand)
+                .map_err(|_| GetRandomError::InsufficientSize)?;
+        }
+
+        Ok(())
     }
 }
