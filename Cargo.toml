@@ -11,4 +11,4 @@ opt-level = "s"
 debug = true
 
 [patch.crates-io]
-lora-phy = { git = "https://github.com/jbeaurivage/lora-phy.git", branch = "sx126x-rng" }
+lora-phy = { git = "https://github.com/jbeaurivage/lora-phy.git", branch = "nimbus-board-type" }
