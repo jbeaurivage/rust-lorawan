@@ -41,10 +41,9 @@ impl Credentials {
     /// Prepare a join request to be sent. This populates the radio buffer with the request to be
     /// sent, and returns the radio config to use for transmitting.
     ///
-    /// # Warning
+    /// # Note
     ///
-    /// Ensure that the RNG's random buffer has at least 100 random bytes
-    /// TODO how many do we really need?
+    /// This method requires that the RNG buffer hold at least 2 random bytes.
     pub(crate) fn create_join_request<
         C: CryptoFactory + Default,
         RNG: GetRandom,
@@ -56,9 +55,9 @@ impl Credentials {
         datarate: DR,
         buf: &mut RadioBuffer<N>,
     ) -> (DevNonce, TxConfig) {
-        // use lowest 16 bits for devnonce
-        // Unwrap is OK because we just proved we have at least 100 random numbers available.
-        let devnonce_bytes = rng.get_random().unwrap() as u16;
+        // Use lowest 16 bits for devnonce
+        // Unwrapping is OK: if a panic occurs, that's because the RNG buffer isn't full enough.
+        let devnonce_bytes = rng.get_random().unwrap().into_u16_truncate();
 
         buf.clear();
 
@@ -73,8 +72,8 @@ impl Credentials {
 
         let devnonce_copy = DevNonce::new(devnonce).unwrap();
 
-        // If the random number buffer is empty, re-fill with 100 random numbers.
-        // TODO make this better as the number of necessary random numbers for a TX should be bounded.s
+        // Unwrapping here because if an error occurs, that's because the RNG buffer isn't full enough, and that's a
+        // programming error.
         let tx_config = region
             .create_tx_config(rng, datarate, &Frame::Join)
             .unwrap();
