@@ -243,3 +243,47 @@ mod private {
     /// implementations
     pub trait Sealed {}
 }
+
+#[cfg(feature = "dummy-radio")]
+/// A dummy radio for documentation-generated code (and potentially tests?)
+pub mod dummy_radio {
+    use crate::radio::{Error, Event, Response};
+    use crate::{radio::PhyRxTx, Timings};
+
+    #[derive(Default)]
+    pub struct Radio {
+        arr: [u8; 2],
+    }
+
+    impl PhyRxTx for Radio {
+        type PhyError = ();
+        type PhyEvent = ();
+        type PhyResponse = ();
+
+        fn get_mut_radio(&mut self) -> &mut Self {
+            self
+        }
+        fn get_received_packet(&mut self) -> &mut [u8] {
+            &mut self.arr
+        }
+
+        fn handle_event(
+            &mut self,
+            _event: Event<Self>,
+        ) -> Result<Response<Self>, Error<Self::PhyError>>
+        where
+            Self: Sized,
+        {
+            Ok(Response::Idle)
+        }
+    }
+
+    impl Timings for Radio {
+        fn get_rx_window_offset_ms(&self) -> i32 {
+            0
+        }
+        fn get_rx_window_duration_ms(&self) -> u32 {
+            0
+        }
+    }
+}

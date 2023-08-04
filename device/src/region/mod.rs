@@ -17,19 +17,11 @@ pub(crate) use dynamic_channel_plans::EU433;
 pub(crate) use dynamic_channel_plans::EU868;
 pub(crate) use dynamic_channel_plans::IN865;
 
-pub(crate) use fixed_channel_plans::AU915;
-pub(crate) use fixed_channel_plans::US915;
+pub use fixed_channel_plans::AU915;
+pub use fixed_channel_plans::US915;
 
 mod dynamic_channel_plans;
 mod fixed_channel_plans;
-
-#[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
-    UnsupportedChannel,
-    ChannelListTooLong,
-    UnsupportedRegion,
-}
 
 #[derive(Clone)]
 pub struct Configuration {
@@ -102,21 +94,6 @@ impl State {
             Region::US915 => State::US915(US915::default()),
         }
     }
-
-    #[allow(dead_code)]
-    pub fn region(&self) -> Region {
-        match self {
-            Self::AS923_1(_) => Region::AS923_1,
-            Self::AS923_2(_) => Region::AS923_2,
-            Self::AS923_3(_) => Region::AS923_3,
-            Self::AS923_4(_) => Region::AS923_4,
-            Self::AU915(_) => Region::AU915,
-            Self::EU433(_) => Region::EU433,
-            Self::EU868(_) => Region::EU868,
-            Self::IN865(_) => Region::IN865,
-            Self::US915(_) => Region::US915,
-        }
-    }
 }
 
 // This datarate type is used internally for defining bandwidth/sf per region
@@ -143,11 +120,11 @@ macro_rules! mut_region_dispatch {
         State::AS923_2(state) => state.$t(),
         State::AS923_3(state) => state.$t(),
         State::AS923_4(state) => state.$t(),
-        State::AU915(state) => state.$t(),
+        State::AU915(state) => state.plan.$t(),
         State::EU868(state) => state.$t(),
         State::EU433(state) => state.$t(),
         State::IN865(state) => state.$t(),
-        State::US915(state) => state.$t(),
+        State::US915(state) => state.plan.$t(),
     }
   };
   ($s:expr, $t:tt, $($arg:tt)*) => {
@@ -156,11 +133,11 @@ macro_rules! mut_region_dispatch {
         State::AS923_2(state) => state.$t($($arg)*),
         State::AS923_3(state) => state.$t($($arg)*),
         State::AS923_4(state) => state.$t($($arg)*),
-        State::AU915(state) => state.$t($($arg)*),
+        State::AU915(state) => state.plan.$t($($arg)*),
         State::EU868(state) => state.$t($($arg)*),
         State::EU433(state) => state.$t($($arg)*),
         State::IN865(state) => state.$t($($arg)*),
-        State::US915(state) => state.$t($($arg)*),
+        State::US915(state) => state.plan.$t($($arg)*),
     }
   };
 }
@@ -172,11 +149,11 @@ macro_rules! region_dispatch {
         State::AS923_2(state) => state.$t(),
         State::AS923_3(state) => state.$t(),
         State::AS923_4(state) => state.$t(),
-        State::AU915(state) => state.$t(),
+        State::AU915(state) => state.plan.$t(),
         State::EU868(state) => state.$t(),
         State::EU433(state) => state.$t(),
         State::IN865(state) => state.$t(),
-        State::US915(state) => state.$t(),
+        State::US915(state) => state.plan.$t(),
     }
   };
   ($s:expr, $t:tt, $($arg:tt)*) => {
@@ -185,11 +162,11 @@ macro_rules! region_dispatch {
         State::AS923_2(state) => state.$t($($arg)*),
         State::AS923_3(state) => state.$t($($arg)*),
         State::AS923_4(state) => state.$t($($arg)*),
-        State::AU915(state) => state.$t($($arg)*),
+        State::AU915(state) => state.plan.$t($($arg)*),
         State::EU868(state) => state.$t($($arg)*),
         State::EU433(state) => state.$t($($arg)*),
         State::IN865(state) => state.$t($($arg)*),
-        State::US915(state) => state.$t($($arg)*),
+        State::US915(state) => state.plan.$t($($arg)*),
     }
   };
 }
@@ -197,101 +174,6 @@ macro_rules! region_dispatch {
 impl Configuration {
     pub fn new(region: Region) -> Configuration {
         Configuration::with_state(State::new(region))
-    }
-
-    /// Create a new [`Configuration`] with a specific set of channels enabled
-    /// for joining the network. You can specify up to 16 preferred channels.
-    ///
-    /// When `join` is called on a [`Configuration`] created using this
-    /// method, the network will be attempted to be joined only on the provided
-    /// channel subset. This set of channels will be retried the number of times
-    /// specified; after which we will revert to trying to join with all
-    /// channels enabled using a preset sequence.
-    ///
-    /// This method only makes sense for fixed channel plans (AU915, US915).
-    /// Trying to call this constructor with a dynamic channel region will
-    /// return `Err`.
-    ///
-    /// # About supported channels (fixed channel plans only)
-    ///
-    /// Supported channels:
-    ///
-    /// * 64 125 kHz channels (0-63)
-    /// * 8 500 kHz channels (64-71)
-    ///
-    /// If a channel out of this range is specified, `Err(())` will be returned.
-    ///
-    /// # ⚠️Warning⚠️
-    ///
-    /// It is recommended to set a low number (ie, < 10) of join retries using the
-    /// preferred channels. The reason for this is if you *only* try to join
-    /// with a channel bias, and the network is configured to use a
-    /// strictly different set of channels than the ones you provide, the
-    /// network will NEVER be joined.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(Configuration)` if the provided channel set is correct and the
-    ///   region is a fixed channel plan
-    /// * The length of `channel_list` must be <= 16, otherwise `Err` will
-    ///   be returned.
-    /// * If a channel out of the specified channel range is specified,
-    ///   `Err` will be returned (ie, >= 72).
-    pub fn new_with_preferred_channels(
-        region: Region,
-        preferred_channels: &[u8],
-        num_retries: usize,
-    ) -> Result<Configuration, Error> {
-        use Region::*;
-        match region {
-            US915 | AU915 => {
-                if preferred_channels.len() > 16 {
-                    return Err(Error::ChannelListTooLong);
-                }
-
-                if preferred_channels.iter().any(|c| *c >= 72) {
-                    return Err(Error::UnsupportedChannel);
-                }
-
-                let mut config = Configuration::with_state(State::new(region));
-                match &mut config.state {
-                    State::US915(s) => {
-                        s.set_preferred_join_channels(preferred_channels, num_retries)
-                    }
-                    State::AU915(s) => {
-                        s.set_preferred_join_channels(preferred_channels, num_retries)
-                    }
-                    _ => (),
-                }
-                // let empty_mask = ChannelMask::<2>::new_from_raw(&[0x00, 0x00]);
-                // let mut masks =
-                //     [empty_mask.clone(), empty_mask.clone(), empty_mask.clone(), empty_mask];
-
-                // // Construct the channel masks from the provided channel list
-                // for channel in join_channels {
-                //     if *channel >= 72 {
-                //         return Err(Error::UnsupportedChannel);
-                //     }
-
-                //     let mask_idx = (channel / 16) as usize;
-                //     let mask = &mut masks[mask_idx];
-
-                //     let bank = (*channel as usize - mask_idx * 16) / 8;
-                //     let old = mask.get_index(bank);
-                //     let bit_pos = channel % 8;
-
-                //     mask.set_bank(bank, (1 << bit_pos) | old);
-                // }
-
-                // // Set the enabled channels in config
-                // for (cm_ctrl, mask) in masks.iter().enumerate() {
-                //     config.set_channel_mask(cm_ctrl as u8, mask.clone());
-                // }
-
-                Ok(config)
-            }
-            _ => Err(Error::UnsupportedRegion),
-        }
     }
 
     fn with_state(state: State) -> Configuration {
@@ -405,11 +287,6 @@ impl Configuration {
 
     pub(crate) fn get_coding_rate(&self) -> CodingRate {
         region_dispatch!(self, get_coding_rate)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn get_current_region(&self) -> super::region::Region {
-        self.state.region()
     }
 }
 

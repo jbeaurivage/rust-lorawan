@@ -5,8 +5,8 @@ use lorawan::maccommands::ChannelMask;
 mod au915;
 mod us915;
 
-pub(crate) use au915::AU915;
-pub(crate) use us915::US915;
+pub use au915::AU915;
+pub use us915::US915;
 
 #[derive(Clone)]
 struct PreferredJoinChannels {
@@ -67,10 +67,79 @@ pub(crate) struct FixedChannelPlan<const D: usize, F: FixedChannelRegion<D>> {
     join_channels: JoinChannels,
 }
 
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Error {
+    UnsupportedChannel,
+    ChannelListTooLong,
+}
+
 impl<const D: usize, F: FixedChannelRegion<D>> FixedChannelPlan<D, F> {
-    pub fn set_preferred_join_channels(&mut self, preferred_channels: &[u8], num_retries: usize) {
+    /// Provide a list of at most 17 "preferred channels" which will be used for
+    /// during Join. This set of channels will be retried the number of times
+    /// specified; after which we will revert to trying to join with all channels
+    /// enabled using a preset sequence.
+    ///
+    /// # About supported channels
+    ///
+    /// Supported channels:
+    ///
+    /// * 64 125 kHz channels (0-63)
+    /// * 8 500 kHz channels (64-71)
+    ///
+    /// If a channel out of this range is specified, `Err(())` will be returned.
+    ///
+    /// # ⚠️Warning⚠️
+    ///
+    /// It is recommended to set a low number (ie, < 10) of join retries using the
+    /// preferred channels and, in fact, anything above 1 is technically out
+    /// non-compliant with the LoRaWAN specification. The reason for this is if you
+    /// *only* try to join with a channel bias, and the network is configured to use
+    /// a strictly different set of channels than the ones you provide, the network
+    /// will NEVER be joined.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the provided channel set is correct
+    /// * The length of `channel_list` must be <= 16, otherwise `Err` will
+    ///   be returned.
+    /// * If a channel out of the specified channel range is specified,
+    ///   `Err` will be returned (ie, >= 72).
+    ///
+    /// Example
+    /// ```rust
+    /// use lorawan::default_crypto;
+    /// use lorawan_device::{Device, JoinMode, region::US915, dummy_radio};
+    /// use rand_core::OsRng;
+    ///
+    /// let mut us915 = US915::default();
+    /// // sets the first sub-band as the preferred Join channels
+    /// // retries is set to 1, so after the first attempt, normal band cycling will occur
+    /// us915.set_preferred_join_channels(&[0, 1, 2, 3, 4, 5, 6, 7, 64], 1).unwrap();
+    /// let device = Device::<dummy_radio::Radio, default_crypto::DefaultFactory, OsRng, 12>::new(
+    ///     us915.into(),
+    ///     JoinMode::OTAA { appeui: [0; 8], deveui: [0;8], appkey: [0; 16] },
+    ///     dummy_radio::Radio::default(),
+    ///     OsRng,
+    /// );
+    ///
+    /// ```
+    pub fn set_preferred_join_channels(
+        &mut self,
+        preferred_channels: &[u8],
+        num_retries: usize,
+    ) -> Result<(), Error> {
+        if preferred_channels.len() > 16 {
+            return Err(Error::ChannelListTooLong);
+        }
+
+        if preferred_channels.iter().any(|c| *c >= 72) {
+            return Err(Error::UnsupportedChannel);
+        }
+
         self.join_channels
             .set_preferred(heapless::Vec::from_slice(preferred_channels).unwrap(), num_retries);
+        Ok(())
     }
 
     pub fn set_125k_channels(&mut self, enabled: bool) {
