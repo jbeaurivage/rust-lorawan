@@ -3,11 +3,13 @@ use core::marker::PhantomData;
 use lorawan::maccommands::ChannelMask;
 
 mod au915;
+mod channel;
 mod us915;
 
 pub use au915::AU915;
 pub use us915::US915;
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone)]
 struct PreferredJoinChannels {
     channel_list: heapless::Vec<u8, 16>,
@@ -16,6 +18,7 @@ struct PreferredJoinChannels {
     num_retries: usize,
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Default, Clone)]
 struct JoinChannels {
     preferred_channels: Option<PreferredJoinChannels>,
@@ -70,7 +73,6 @@ pub(crate) struct FixedChannelPlan<const D: usize, F: FixedChannelRegion<D>> {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
-    UnsupportedChannel,
     ChannelListTooLong,
 }
 
@@ -124,21 +126,21 @@ impl<const D: usize, F: FixedChannelRegion<D>> FixedChannelPlan<D, F> {
     /// );
     ///
     /// ```
-    pub fn set_preferred_join_channels(
+    pub fn set_preferred_join_channels<T: Into<u8> + Clone>(
         &mut self,
-        preferred_channels: &[u8],
+        preferred_channels: &[T],
         num_retries: usize,
     ) -> Result<(), Error> {
         if preferred_channels.len() > 16 {
             return Err(Error::ChannelListTooLong);
         }
 
-        if preferred_channels.iter().any(|c| *c >= 72) {
-            return Err(Error::UnsupportedChannel);
+        let mut vec: heapless::Vec<u8, 16> = heapless::Vec::new();
+        for c in preferred_channels {
+            vec.push((*c).clone().into()).unwrap();
         }
 
-        self.join_channels
-            .set_preferred(heapless::Vec::from_slice(preferred_channels).unwrap(), num_retries);
+        self.join_channels.set_preferred(vec, num_retries);
         Ok(())
     }
 

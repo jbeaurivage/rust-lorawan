@@ -9,6 +9,8 @@ use datarates::*;
 const AU_DBM: i8 = 21;
 const DEFAULT_RX2: u32 = 923_300_000;
 
+pub use super::channel::Channel;
+
 #[derive(Default, Clone)]
 pub struct AU915 {
     pub(crate) plan: FixedChannelPlan<16, AU915Region>,
@@ -17,7 +19,7 @@ pub struct AU915 {
 impl AU915 {
     pub fn set_preferred_join_channels(
         &mut self,
-        preferred_channels: &[u8],
+        preferred_channels: &[Channel],
         num_retries: usize,
     ) -> Result<(), fixed_channel_plans::Error> {
         self.plan.set_preferred_join_channels(preferred_channels, num_retries)
