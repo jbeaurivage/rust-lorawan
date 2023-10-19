@@ -38,9 +38,28 @@ impl From<Channel> for u8 {
     }
 }
 
+seq_macro::seq!(
+    N in 1..=8 {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[repr(usize)]
+        pub enum Subband {
+            #(
+                _~N,
+            )*
+        }
+    }
+);
+
+impl From<Subband> for usize {
+    fn from(value: Subband) -> Self {
+        value as usize
+    }
+}
+
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct PreferredJoinChannels {
-    channel_list: heapless::Vec<u8, 16>,
+    channel_list: ChannelMask<9>,
     // Number representing the maximum number of retries allowed using the preferred channels list,
     max_retries: usize,
     // Decrementing number representing how many tries we have left with the specified list before
@@ -51,12 +70,15 @@ struct PreferredJoinChannels {
 impl PreferredJoinChannels {
     fn try_get_channel(&mut self, rng: &mut impl RngCore) -> Option<u8> {
         if self.num_retries > 0 {
-            let random = rng.next_u32();
+            let mut random = (rng.next_u32() & 0b111111) as usize;
+            // keep selecting a random channel until we find one that is enabled
+            while !self.channel_list.is_enabled(random).unwrap() {
+                random = (rng.next_u32() & 0b111111) as usize;
+            }
             self.num_retries -= 1;
-            let len = self.channel_list.len();
             // TODO non-compliant because the channel might be the same as the previously
             // used channel?
-            Some(self.channel_list[random as usize % len])
+            Some(self.channel_list.get_index(random))
         } else {
             None
         }
@@ -66,6 +88,7 @@ impl PreferredJoinChannels {
 /// Bitflags containing subbands that haven't yet been tried for a join attempt
 /// this round.
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct AvailableSubbands(u16);
 
 impl AvailableSubbands {
@@ -101,6 +124,7 @@ impl Default for AvailableSubbands {
 }
 
 #[derive(Default, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct JoinChannels {
     preferred_channels: Option<PreferredJoinChannels>,
     // List of subbands that haven't already been tried.
@@ -128,7 +152,7 @@ impl JoinChannels {
         8 * subband + (rng.next_u32() % 8) as u8
     }
 
-    fn set_preferred(&mut self, preferred: heapless::Vec<u8, 16>, max_retries: usize) -> Self {
+    fn set_preferred(&mut self, preferred: ChannelMask<9>, max_retries: usize) -> Self {
         Self {
             preferred_channels: Some(PreferredJoinChannels {
                 channel_list: preferred,
@@ -152,14 +176,10 @@ pub(crate) struct FixedChannelPlan<const NUM_DR: usize, F: FixedChannelRegion<NU
 impl<const D: usize, F: FixedChannelRegion<D>> FixedChannelPlan<D, F> {
     pub fn set_preferred_join_channels(
         &mut self,
-        preferred_channels: &[Channel],
+        preferred_channels: ChannelMask<9>,
         num_retries: usize,
     ) {
-        let mut channel_vec = heapless::Vec::new();
-        for chan in preferred_channels.iter().map(|c| *c as u8) {
-            channel_vec.push(chan).unwrap();
-        }
-        self.join_channels.set_preferred(channel_vec, num_retries);
+        self.join_channels.set_preferred(preferred_channels, num_retries);
     }
 
     pub fn remove_preferred_join_channels(&mut self) {

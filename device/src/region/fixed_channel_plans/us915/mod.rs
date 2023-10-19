@@ -19,6 +19,7 @@ impl US915 {
         Self::default()
     }
 
+
     /// Specify a set of channels enabled
     /// for joining the network. You can specify up to 16 preferred channels.
     ///
@@ -35,19 +36,15 @@ impl US915 {
     /// * 64 125 kHz channels (0-63)
     /// * 8 500 kHz channels (64-71)
     ///
-    /// If a channel out of this range is specified, `Err(())` will be returned.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(Configuration)` if the provided channel set is correct
-    /// * The length of `channel_list` must be <= 16, otherwise `Err` will
-    ///   be returned.
-    /// * If a channel out of the specified channel range is specified,
-    ///   `Err` will be returned (ie, >= 72).
-    pub fn set_preferred_join_channels<const N: usize>(
-        &mut self,
-        preferred_channels: &[Channel; N],
-    ) {
+    pub fn set_preferred_join_channels(&mut self, preferred_channels: ChannelMask<9>) {
+        self.set_preferred_join_channels_and_noncompliant_retries(preferred_channels, 1)
+    }
+
+    pub fn set_preferred_subband(&mut self, subband: Subband) {
+        let mut preferred_channels = ChannelMask::default();
+        preferred_channels.set_bank(subband.into(), 0xFF);
+        let fat_channel = 63 + subband as usize;
+        preferred_channels.set_channel(fat_channel, true);
         self.set_preferred_join_channels_and_noncompliant_retries(preferred_channels, 1)
     }
 
@@ -85,13 +82,18 @@ impl US915 {
     ///   be returned.
     /// * If a channel out of the specified channel range is specified,
     ///   `Err` will be returned (ie, >= 72).
-    pub fn set_preferred_join_channels_and_noncompliant_retries<const N: usize>(
+    pub fn set_preferred_join_channels_and_noncompliant_retries(
         &mut self,
-        preferred_channels: &[Channel; N],
+        preferred_channels: ChannelMask<9>,
         num_retries: usize,
     ) {
-        gen_assert!(N, N <= 16);
-        self.plan.set_preferred_join_channels(preferred_channels, num_retries);
+        self.plan.set_preferred_join_channels(preferred_channels, num_retries)
+    }
+
+    pub fn remove_preferred_join_channels(
+        &mut self,
+    ) {
+        self.plan.remove_preferred_join_channels()
     }
 }
 

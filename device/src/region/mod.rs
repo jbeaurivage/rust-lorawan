@@ -304,8 +304,7 @@ impl Configuration {
         region_dispatch!(self, get_coding_rate)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn get_current_region(&self) -> super::region::Region {
+    pub fn get_current_region(&self) -> Region {
         self.state.region()
     }
 }
