@@ -72,8 +72,17 @@ impl PreferredJoinChannels {
         if self.num_retries > 0 {
             let mut random = (rng.next_u32() & 0b111111) as usize;
             // keep selecting a random channel until we find one that is enabled
-            while !self.channel_list.is_enabled(random).unwrap() {
-                random = (rng.next_u32() & 0b111111) as usize;
+            // NB: the is_enabled function throws an error if the channel is out of range
+            loop {
+                match self.channel_list.is_enabled(random) {
+                    Ok(true) => break,
+                    Ok(false) | Err(_) => {
+                        random = (rng.next_u32() & 0b111111) as usize;
+                    }
+                    Err(_) => {
+                        return None;
+                    }
+                }
             }
             self.num_retries -= 1;
             // TODO non-compliant because the channel might be the same as the previously
